@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Population distribution and GDP per capita</title>
+    <link rel="icon" href="data:;base64,iVBORwOKGO=" />
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="header">
+        <h2>Population distribution and GDP per capita</h2>
+        <div id="info-dropdown">
+            <button id="info-toggle">ℹ️ About this data ▾</button>
+            <div id="info-content">
+                <p><strong>Made by: </strong>Jackie Cheng</p>
+                <p><strong>Data Sources:</strong> All data from 
+                    <a href="https://ourworldindata.org" target="_blank">Our World In Data</a>
+                </p>
+                <p><strong>Datasets used:</strong></p>
+                <ul>
+                    <li>Gender Development Index vs GDP per Capita</li>
+                    <li>Share of Urban and Rural Population</li>
+                </ul>
+                <p><strong>Years:</strong> Data ranges from 1960–2024. Use the year slider to explore different years. Default view shows 2023 as many countries do not have 2024 data.</p>
+                 <p><strong>Color choices:</strong> Blue = Urban, Orange = Rural, Pink = Gender Development Index. Countries are colored by world region in the scatterplot.</p>
+            </div>
+        </div>
+    </div>
+
+   
+
+    <div id="dashboard">
+
+        <div id="controls">
+             <div id="slider-container">
+                <label for="year-slider">Year: <span id="year-label">2023</span></label>
+                <input type="range" id="year-slider" min="2000" max="2023" step="1" value="2023">
+            </div>
+            <div id="scatter-controls">
+                <div class="axis-selector">
+                    <label>X Axis:</label>
+                    <button class="x-btn active" data-attr="Urban">Urban %</button>
+                    <button class="x-btn" data-attr="Rural">Rural %</button>
+                    <button class="x-btn" data-attr="gdp">GDP per Capita</button>
+                    <button class="x-btn" data-attr="gdi">GDI</button>
+                    <button class="x-btn" data-attr="pop">Population</button>
+                </div>
+                <div class="axis-selector">
+                    <label>Y Axis:</label>
+                    <button class="y-btn" data-attr="Urban">Urban %</button>
+                    <button class="y-btn" data-attr="Rural">Rural %</button>
+                    <button class="y-btn" data-attr="gdp">GDP per Capita</button>
+                    <button class="y-btn active" data-attr="gdi">GDI</button>
+                    <button class="y-btn" data-attr="pop">Population</button>
+                </div>
+            </div>
+        </div>
+        <div id="row-2">
+            <div>
+                <div id="panel-3"></div>
+            </div>
+            <div>
+                <div id="plot"></div>
+            </div>
+        </div>
+        <div id="row-1">
+            <div id="panel-1"></div>
+            <div id="panel-2"></div>
+        </div>
+        
+
+        <div id="row-3">
+            <div id="map"></div>
+            
+        </div>
+
+    </div>
+
+    <div id="tooltip"></div>
+
+    <script src="js/d3.v6.min.js"></script>
+    <script src="js/choroplethMap.js"></script>
+    <script src="js/start.js"></script>
+</body>
+</html>
