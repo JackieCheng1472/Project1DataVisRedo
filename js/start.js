@@ -57,7 +57,7 @@ d3.csv("data/gender-development-index-vs-gdp-per-capita.csv").then(data => {
     drawRuralBarChart(urbDataGlobal, year);
     drawGenderBarChart(genderDataGlobal, year);
     drawScatterChart(urbDataGlobal, genderDataGlobal, year);
-    drawChoropleth(year);
+    drawChoropleth(year, scatterXAttr);
   });
 
 }).catch(error => console.error("Error loading gender data:", error));
@@ -113,32 +113,58 @@ Promise.all([
     d.gdi  = +d["Gender Development Index"];
   });
 
-  drawChoropleth(2023); 
+  drawChoropleth(2023, scatterXAttr);
 }).catch(error => console.error(error));
 
-function drawChoropleth(selectedYear) {
+function drawChoropleth(selectedYear, attr = "gdi") {
   if (!geoDataGlobal) return;
 
-  // find latest year per country up to selectedYear
+  // which CSV field to read
+  const attrFieldMap = {
+    gdi:   d => d.gdi,
+    gdp:   d => d.gdp,
+    Urban: d => d.Urban,   // from urbData — handled separately below
+    Rural: d => d.Rural,
+    pop:   d => d.pop
+  };
+
   const latest = new Map();
-  choroplethCountryData.forEach(d => {
-    if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return;
-    if (!d["Gender Development Index"]) return;
-    if (d.Year > selectedYear) return; // ← only use data up to selected year
-    const prev = latest.get(d.Entity);
-    if (!prev || d.Year > prev.Year) latest.set(d.Entity, d);
-  });
 
-  // update geoData properties
-  geoDataGlobal.features.forEach(d => {
-    const lookupName = nameMap[d.properties.name] || d.properties.name;
+  if (attr === "Urban" || attr === "Rural") {
+    // use urbDataGlobal for Urban/Rural
+    urbDataGlobal.forEach(d => {
+      if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return;
+      if (!d[attr]) return;
+      if (d.Year > selectedYear) return;
+      const prev = latest.get(d.Entity);
+      if (!prev || d.Year > prev.Year) latest.set(d.Entity, d);
+    });
+  } else {
+    // use choroplethCountryData (gender/GDP/pop CSV)
+    choroplethCountryData.forEach(d => {
+      if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return;
+      const val = attrFieldMap[attr](d);
+      if (!val) return;
+      if (d.Year > selectedYear) return;
+      const prev = latest.get(d.Entity);
+      if (!prev || d.Year > prev.Year) latest.set(d.Entity, d);
+    });
+  }
+
+  // write the chosen value into geoData as a generic "mapValue" property
+  geoDataGlobal.features.forEach(feat => {
+    const lookupName = nameMap[feat.properties.name] || feat.properties.name;
     const match = latest.get(lookupName);
-    d.properties.genderindex = match ? +match["Gender Development Index"] : null;
+    feat.properties.mapValue = match ? +attrFieldMap[attr](match) : null;
+    feat.properties.genderindex = feat.properties.mapValue; // keep choropleth class working
   });
 
-  // clear and redraw
   d3.select("#map").selectAll("*").remove();
-  new ChoroplethMap({ parentElement: '#map', selectedYear: selectedYear }, geoDataGlobal);
+  new ChoroplethMap({
+    parentElement: '#map',
+    selectedYear,
+    attr          // pass attr so the legend label can update
+  }, geoDataGlobal);
 }
 // ---- Histograms ----
 function drawUrbBarChart(data, selectedYear) {
@@ -480,6 +506,7 @@ function initScatterControls(urbData, genderData) {
       scatterXAttr = this.dataset.attr;
       const year = +document.getElementById("year-slider").value;
       drawScatterChart(urbData, genderData, year);
+      drawChoropleth(year, scatterXAttr);
     });
   });
 

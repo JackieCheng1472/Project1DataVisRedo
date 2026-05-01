@@ -1,19 +1,29 @@
 class ChoroplethMap {
 
   constructor(_config, _data) {
+    const attrLabels = {
+      gdi:   "Gender Development Index",
+      gdp:   "GDP per Capita",
+      Urban: "Urban Population %",
+      Rural: "Rural Population %",
+      pop:   "Population"
+    };
+
     this.config = {
-      
-      parentElement: _config.parentElement,
-      selectedYear:  _config.selectedYear || 2023,
-      containerWidth: _config.containerWidth || 1080,
-      containerHeight: _config.containerHeight || 510,
-      margin: _config.margin || {top: 0, right: 0, bottom: 0, left: 0},
-      tooltipPadding: 10,
-      legendBottom: 50,
-      legendLeft: 50,
+      parentElement:    _config.parentElement,
+      selectedYear:     _config.selectedYear || 2023,
+      attr:             _config.attr || "gdi",
+      containerWidth:   _config.containerWidth  || 1080,
+      containerHeight:  _config.containerHeight || 510,
+      margin:           _config.margin || { top: 0, right: 0, bottom: 0, left: 0 },
+      tooltipPadding:   10,
+      legendBottom:     50,
+      legendLeft:       50,
       legendRectHeight: 12,
-      legendRectWidth: 150
-    }
+      legendRectWidth:  150,
+      attrLabel:        attrLabels[_config.attr] || "Gender Development Index"
+    };
+
     this.data = _data;
     this.initVis();
   }
@@ -34,10 +44,6 @@ class ChoroplethMap {
     vis.projection = d3.geoMercator();
     vis.geoPath    = d3.geoPath().projection(vis.projection);
 
-    vis.colorScale = d3.scaleLinear()
-      .range(['#f1eced', '#f06277'])
-      .interpolate(d3.interpolateHcl);
-
     vis.linearGradient = vis.svg.append('defs').append('linearGradient')
       .attr('id', 'legend-gradient');
 
@@ -53,21 +59,35 @@ class ChoroplethMap {
       .attr('class', 'legend-title')
       .attr('dy', '.35em')
       .attr('y', -10)
-      .text('Gender Development Index');
+      .text(vis.config.attrLabel);
 
     vis.updateVis();
   }
 
   updateVis() {
     let vis = this;
-  const gdiExtent = d3.extent(vis.data.features, d => d.properties.genderindex);
-  vis.colorScale.domain(gdiExtent);
-  window._choroplethColorScale = vis.colorScale; 
-  vis.legendTitle.text(`GDI (${vis.config.selectedYear})`);
+
+    const attr = vis.config.attr;
+    const extent = d3.extent(vis.data.features, d => d.properties.mapValue);
+
+    // use log scale for gdp and pop, linear for everything else
+    if (attr === "gdp" || attr === "pop") {
+      vis.colorScale = d3.scaleSequentialLog()
+        .domain(extent)
+        .interpolator(d3.interpolateReds);
+    } else {
+      vis.colorScale = d3.scaleLinear()
+        .domain(extent)
+        .range(['#f1eced', '#f06277'])
+        .interpolate(d3.interpolateHcl);
+    }
+
+    window._choroplethColorScale = vis.colorScale;
+    vis.legendTitle.text(`${vis.config.attrLabel} (${vis.config.selectedYear})`);
 
     vis.legendStops = [
-      { color: '#f1eced', value: gdiExtent[0], offset: 0   },
-      { color: '#f06277', value: gdiExtent[1], offset: 100 },
+      { color: vis.colorScale(extent[0]), value: extent[0], offset: 0   },
+      { color: vis.colorScale(extent[1]), value: extent[1], offset: 100 },
     ];
 
     vis.renderVis();
@@ -76,7 +96,6 @@ class ChoroplethMap {
   renderVis() {
     let vis = this;
 
-    
     vis.projection.fitSize([vis.width, vis.height], vis.data);
 
     const countryPath = vis.chart.selectAll('.country')
@@ -84,18 +103,15 @@ class ChoroplethMap {
       .join('path')
       .attr('class', 'country')
       .attr('d', vis.geoPath)
-      .attr('fill', d => {
-        if (d.properties.genderindex) {
-          return vis.colorScale(d.properties.genderindex);
-        } else {
-          return '#e0e0e0'; // grey for no data
-        }
-      });
+      .attr('fill', d => d.properties.mapValue != null
+        ? vis.colorScale(d.properties.mapValue)
+        : '#e0e0e0'
+      );
 
     countryPath
       .on('mousemove', (event, d) => {
-        const gdi = d.properties.genderindex
-          ? `<strong>${d.properties.genderindex.toFixed(3)}</strong> Gender Development Index`
+        const val = d.properties.mapValue != null
+          ? `<strong>${d.properties.mapValue.toFixed(3)}</strong> ${vis.config.attrLabel}`
           : 'No data available';
         d3.select('#tooltip')
           .style('display', 'block')
@@ -103,7 +119,7 @@ class ChoroplethMap {
           .style('top',  (event.pageY + vis.config.tooltipPadding) + 'px')
           .html(`
             <div class="tooltip-title">${d.properties.name}</div>
-            <div>${gdi}</div>
+            <div>${val}</div>
           `);
       })
       .on('mouseleave', () => {
@@ -117,8 +133,8 @@ class ChoroplethMap {
       .attr('text-anchor', 'middle')
       .attr('dy', '.35em')
       .attr('y', 20)
-      .attr('x', (d, i) => i == 0 ? 0 : vis.config.legendRectWidth)
-      .text(d => d.value ? d.value.toFixed(2) : '');
+      .attr('x', (d, i) => i === 0 ? 0 : vis.config.legendRectWidth)
+      .text(d => d.value != null ? d.value.toFixed(2) : '');
 
     vis.linearGradient.selectAll('stop')
       .data(vis.legendStops)
