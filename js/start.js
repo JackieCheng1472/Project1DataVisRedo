@@ -16,8 +16,13 @@ const nameMap = {
   "England": "United Kingdom",
   "Greenland": "Greenland",
   "Syrian Arab Republic": "Syria"
-  
 };
+
+document.getElementById("reset-btn").addEventListener("click", function() {
+  selectedEntities = new Set();
+  const year = +document.getElementById("year-slider").value;
+  redrawAll(year);
+});
 
 document.addEventListener("DOMContentLoaded", function() {
   document.getElementById("info-toggle").addEventListener("click", function() {
@@ -38,26 +43,22 @@ d3.csv("data/gender-development-index-vs-gdp-per-capita.csv").then(data => {
   });
 
   genderDataGlobal = data;
-    // set slider range from available years
+
   const years  = [...new Set(data.map(d => d.Year))].sort((a, b) => a - b);
   const slider = document.getElementById("year-slider");
   const label  = document.getElementById("year-label");
   slider.min   = d3.min(years);
-  slider.max   = 2023;//d3.max(years);
-  slider.value = 2023; //d3.max(years);
-  label.textContent = 2023; //d3.max(years);
+  slider.max   = 2023;
+  slider.value = 2023;
+  label.textContent = 2023;
 
-  
   drawGenderBarChart(genderDataGlobal, 2023);
+
   slider.addEventListener("input", function() {
     const year = +this.value;
     label.textContent = year;
     selectedEntities = new Set();
-    drawUrbBarChart(urbDataGlobal, year);
-    drawRuralBarChart(urbDataGlobal, year);
-    drawGenderBarChart(genderDataGlobal, year);
-    drawScatterChart(urbDataGlobal, genderDataGlobal, year);
-    drawChoropleth(year, scatterXAttr);
+    redrawAll(year);
   });
 
 }).catch(error => console.error("Error loading gender data:", error));
@@ -71,19 +72,10 @@ d3.csv("data/share-urban-and-rural-population.csv").then(data => {
   });
 
   urbDataGlobal = data;
-
-
-  const years = [...new Set(data.map(d => d.Year))].sort((a, b) => a - b);
-  // initial draw
   drawUrbBarChart(urbDataGlobal, 2023);
   drawRuralBarChart(urbDataGlobal, 2023);
 
-  
-
 }).catch(error => console.error("Error loading urban data:", error));
-
-
-
 
 // ---- scatter ----
 Promise.all([
@@ -94,7 +86,7 @@ Promise.all([
   genderData.forEach(d => { d.Year = +d.Year; d.gdi = +d["Gender Development Index"]; d.gdp = +d["GDP per capita"]; d.pop = +d["Population"]; });
 
   drawScatterChart(urbData, genderData, 2023);
-  initScatterControls(urbData, genderData); 
+  initScatterControls(urbData, genderData);
 });
 
 // ---- choropleth ----
@@ -105,33 +97,75 @@ Promise.all([
   d3.json('data/worldShapes.json'),
   d3.csv('data/gender-development-index-vs-gdp-per-capita.csv')
 ]).then(data => {
-  geoDataGlobal        = data[0];
+  geoDataGlobal         = data[0];
   choroplethCountryData = data[1];
 
   choroplethCountryData.forEach(d => {
     d.Year = +d.Year;
     d.gdi  = +d["Gender Development Index"];
+    d.gdp  = +d["GDP per capita"];
+    d.pop  = +d["Population"];
   });
 
   drawChoropleth(2023, scatterXAttr);
 }).catch(error => console.error(error));
 
+// ---- redraw all charts ----
+function redrawAll(year) {
+  drawUrbBarChart(urbDataGlobal, year);
+  drawRuralBarChart(urbDataGlobal, year);
+  drawGenderBarChart(genderDataGlobal, year);
+  drawScatterChart(urbDataGlobal, genderDataGlobal, year);
+  drawChoropleth(year, scatterXAttr);
+}
+
+// ---- apply selection: highlights dots, bars, map ----
+function applySelection(year) {
+  // redraw bar charts (they read selectedEntities internally)
+  drawUrbBarChart(urbDataGlobal, year);
+  drawRuralBarChart(urbDataGlobal, year);
+  drawGenderBarChart(genderDataGlobal, year);
+
+  // highlight scatter dots
+  d3.selectAll(".dot")
+    .attr("opacity", d =>
+      selectedEntities.size === 0 || selectedEntities.has(d.Entity) ? 0.75 : 0.1
+    );
+
+  // highlight map
+  d3.selectAll(".country").attr("fill", function(d) {
+    if (selectedEntities.size === 0) {
+      return d.properties.mapValue != null
+        ? window._choroplethColorScale(d.properties.mapValue)
+        : "#e0e0e0";
+    }
+    const isSelected = selectedEntities.has(d.properties.name) ||
+      [...selectedEntities].some(e =>
+        nameMap[d.properties.name] === e || d.properties.name === e
+      );
+    return isSelected
+      ? (d.properties.mapValue != null
+          ? window._choroplethColorScale(d.properties.mapValue)
+          : "#aaa")
+      : "#d0d0d0";
+  });
+}
+
+// ---- choropleth draw ----
 function drawChoropleth(selectedYear, attr = "gdi") {
   if (!geoDataGlobal) return;
 
-  // which CSV field to read
   const attrFieldMap = {
     gdi:   d => d.gdi,
     gdp:   d => d.gdp,
-    Urban: d => d.Urban,   // from urbData — handled separately below
-    Rural: d => d.Rural,
-    pop:   d => d.pop
+    pop:   d => d.pop,
+    Urban: d => d.Urban,
+    Rural: d => d.Rural
   };
 
   const latest = new Map();
 
   if (attr === "Urban" || attr === "Rural") {
-    // use urbDataGlobal for Urban/Rural
     urbDataGlobal.forEach(d => {
       if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return;
       if (!d[attr]) return;
@@ -140,7 +174,6 @@ function drawChoropleth(selectedYear, attr = "gdi") {
       if (!prev || d.Year > prev.Year) latest.set(d.Entity, d);
     });
   } else {
-    // use choroplethCountryData (gender/GDP/pop CSV)
     choroplethCountryData.forEach(d => {
       if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return;
       const val = attrFieldMap[attr](d);
@@ -151,46 +184,59 @@ function drawChoropleth(selectedYear, attr = "gdi") {
     });
   }
 
-  // write the chosen value into geoData as a generic "mapValue" property
   geoDataGlobal.features.forEach(feat => {
     const lookupName = nameMap[feat.properties.name] || feat.properties.name;
     const match = latest.get(lookupName);
     feat.properties.mapValue = match ? +attrFieldMap[attr](match) : null;
-    feat.properties.genderindex = feat.properties.mapValue; // keep choropleth class working
   });
 
   d3.select("#map").selectAll("*").remove();
-  new ChoroplethMap({
-    parentElement: '#map',
-    selectedYear,
-    attr          // pass attr so the legend label can update
-  }, geoDataGlobal);
+  new ChoroplethMap({ parentElement: '#map', selectedYear, attr }, geoDataGlobal);
 }
+
+// ---- shared bar click handler ----
+function handleBarClick(binCountries, year) {
+  const binEntities = new Set(binCountries.map(d => d.Entity));
+
+  // if this exact set is already selected, deselect (toggle off)
+  const alreadySelected = binCountries.length > 0 &&
+    binCountries.every(d => selectedEntities.has(d.Entity)) &&
+    selectedEntities.size === binEntities.size;
+
+  if (alreadySelected) {
+    selectedEntities = new Set();
+  } else {
+    selectedEntities = binEntities;
+  }
+
+  applySelection(year);
+}
+
 // ---- Histograms ----
 function drawUrbBarChart(data, selectedYear) {
-
-  d3.select("#panel-1").selectAll("*").remove(); // clear before redraw
+  d3.select("#panel-1").selectAll("*").remove();
 
   let countries = data.filter(d => {
     if (!d.Code || d.Code.startsWith("OWID") || d.Code.length !== 3) return false;
     return d.Year === selectedYear;
   });
 
-  if (selectedEntities.size > 0) {
-    countries = countries.filter(d => selectedEntities.has(d.Entity));
-  }
-  
+  // for rendering, show only selected if any
+  const displayCountries = selectedEntities.size > 0
+    ? countries.filter(d => selectedEntities.has(d.Entity))
+    : countries;
 
-  // bin countries into 10% urbanization ranges: 0-10, 10-20, ... 90-100
   const binSize = 10;
+  // bins are always built from ALL countries so axis stays stable
   const bins = d3.range(0, 100, binSize).map(start => ({
     label: `${start}–${start + binSize}%`,
     min: start,
     max: start + binSize,
-    countries: countries.filter(d => d.Urban >= start && d.Urban < start + binSize)
+    allCountries: countries.filter(d => d.Urban >= start && d.Urban < start + binSize),
+    countries: displayCountries.filter(d => d.Urban >= start && d.Urban < start + binSize)
   }));
-  // include 100% in the last bin
-  bins[bins.length - 1].countries.push(...countries.filter(d => d.Urban === 100));
+  bins[bins.length - 1].allCountries.push(...countries.filter(d => d.Urban === 100));
+  bins[bins.length - 1].countries.push(...displayCountries.filter(d => d.Urban === 100));
 
   const barMargin = { top: 40, right: 20, bottom: 60, left: 60 };
   const barWidth  = 500;
@@ -200,34 +246,30 @@ function drawUrbBarChart(data, selectedYear) {
 
   const svg = d3.select("#panel-1")
     .append("svg")
-    .attr("width",  barWidth)
-    .attr("height", barHeight)
+    .attr("width", barWidth).attr("height", barHeight)
     .append("g")
     .attr("transform", `translate(${barMargin.left},${barMargin.top})`);
 
-  // title
   svg.append("text")
     .attr("x", iW / 2).attr("y", -14)
     .attr("text-anchor", "middle")
     .attr("font-size", "14px").attr("font-weight", "bold")
-    .text("Number of Countries by Urbanization Range " + `(${selectedYear})`);
+    .text(`Number of Countries by Urbanization Range (${selectedYear})`);
 
   const x = d3.scaleBand()
     .domain(bins.map(b => b.label))
-    .range([0, iW])
-    .padding(0.15);
+    .range([0, iW]).padding(0.15);
 
+  // y domain uses full counts so axis doesn't jump when filtered
   const y = d3.scaleLinear()
-    .domain([0, d3.max(bins, b => b.countries.length)]).nice()
+    .domain([0, d3.max(bins, b => b.allCountries.length)]).nice()
     .range([iH, 0]);
 
-  // gridlines
   svg.append("g")
     .call(d3.axisLeft(y).tickSize(-iW).tickFormat(""))
     .call(g => g.selectAll("line").attr("stroke", "#e0e0e0"))
     .call(g => g.select(".domain").remove());
 
-  // bars
   svg.selectAll(".bar")
     .data(bins)
     .join("rect")
@@ -236,7 +278,11 @@ function drawUrbBarChart(data, selectedYear) {
     .attr("y", b => y(b.countries.length))
     .attr("width", x.bandwidth())
     .attr("height", b => iH - y(b.countries.length))
-    .attr("fill", "#2196f3")
+    .attr("fill", b => {
+      if (selectedEntities.size === 0) return "#2196f3";
+      return b.countries.length > 0 ? "#2196f3" : "#cce4fb";
+    })
+    .style("cursor", "pointer")
     .on("mouseover", (event, b) => {
       d3.select("#tooltip")
         .style("display", "block")
@@ -248,9 +294,11 @@ function drawUrbBarChart(data, selectedYear) {
           <small>${b.countries.map(d => d.Entity).join(", ")}</small>
         `);
     })
-    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"));
+    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"))
+    .on("click", (event, b) => {
+      handleBarClick(b.allCountries, selectedYear);
+    });
 
-  // y axis
   svg.append("g")
     .call(d3.axisLeft(y).tickFormat(d => d).tickSize(0))
     .call(g => g.select(".domain").remove())
@@ -260,7 +308,6 @@ function drawUrbBarChart(data, selectedYear) {
     .attr("fill", "black").attr("text-anchor", "middle")
     .text("Number of Countries");
 
-  // x axis
   svg.append("g")
     .attr("transform", `translate(0,${iH})`)
     .call(d3.axisBottom(x).tickSize(0))
@@ -272,7 +319,6 @@ function drawUrbBarChart(data, selectedYear) {
 }
 
 function drawRuralBarChart(data, selectedYear) {
-
   d3.select("#panel-2").selectAll("*").remove();
 
   let countries = data.filter(d => {
@@ -280,20 +326,20 @@ function drawRuralBarChart(data, selectedYear) {
     return d.Year === selectedYear;
   });
 
-  if (selectedEntities.size > 0) {
-    countries = countries.filter(d => selectedEntities.has(d.Entity));
-  }
+  const displayCountries = selectedEntities.size > 0
+    ? countries.filter(d => selectedEntities.has(d.Entity))
+    : countries;
 
-  // bin countries into 10% urbanization ranges: 0-10, 10-20, ... 90-100
   const binSize = 10;
   const bins = d3.range(0, 100, binSize).map(start => ({
     label: `${start}–${start + binSize}%`,
     min: start,
     max: start + binSize,
-    countries: countries.filter(d => d.Rural >= start && d.Rural < start + binSize)
+    allCountries: countries.filter(d => d.Rural >= start && d.Rural < start + binSize),
+    countries: displayCountries.filter(d => d.Rural >= start && d.Rural < start + binSize)
   }));
-  // include 100% in the last bin
-  bins[bins.length - 1].countries.push(...countries.filter(d => d.Rural === 100));
+  bins[bins.length - 1].allCountries.push(...countries.filter(d => d.Rural === 100));
+  bins[bins.length - 1].countries.push(...displayCountries.filter(d => d.Rural === 100));
 
   const barMargin = { top: 40, right: 20, bottom: 60, left: 60 };
   const barWidth  = 500;
@@ -303,34 +349,29 @@ function drawRuralBarChart(data, selectedYear) {
 
   const svg = d3.select("#panel-2")
     .append("svg")
-    .attr("width",  barWidth)
-    .attr("height", barHeight)
+    .attr("width", barWidth).attr("height", barHeight)
     .append("g")
     .attr("transform", `translate(${barMargin.left},${barMargin.top})`);
 
-  // title
   svg.append("text")
     .attr("x", iW / 2).attr("y", -14)
     .attr("text-anchor", "middle")
     .attr("font-size", "14px").attr("font-weight", "bold")
-    .text("Number of Countries by Ruralization Range (" + selectedYear + ")");
+    .text(`Number of Countries by Ruralization Range (${selectedYear})`);
 
   const x = d3.scaleBand()
     .domain(bins.map(b => b.label))
-    .range([0, iW])
-    .padding(0.15);
+    .range([0, iW]).padding(0.15);
 
   const y = d3.scaleLinear()
-    .domain([0, d3.max(bins, b => b.countries.length)]).nice()
+    .domain([0, d3.max(bins, b => b.allCountries.length)]).nice()
     .range([iH, 0]);
 
-  // gridlines
   svg.append("g")
     .call(d3.axisLeft(y).tickSize(-iW).tickFormat(""))
     .call(g => g.selectAll("line").attr("stroke", "#e0e0e0"))
     .call(g => g.select(".domain").remove());
 
-  // bars
   svg.selectAll(".bar")
     .data(bins)
     .join("rect")
@@ -339,7 +380,11 @@ function drawRuralBarChart(data, selectedYear) {
     .attr("y", b => y(b.countries.length))
     .attr("width", x.bandwidth())
     .attr("height", b => iH - y(b.countries.length))
-    .attr("fill", "#f37921")
+    .attr("fill", b => {
+      if (selectedEntities.size === 0) return "#f37921";
+      return b.countries.length > 0 ? "#f37921" : "#fde3cc";
+    })
+    .style("cursor", "pointer")
     .on("mouseover", (event, b) => {
       d3.select("#tooltip")
         .style("display", "block")
@@ -351,9 +396,11 @@ function drawRuralBarChart(data, selectedYear) {
           <small>${b.countries.map(d => d.Entity).join(", ")}</small>
         `);
     })
-    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"));
+    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"))
+    .on("click", (event, b) => {
+      handleBarClick(b.allCountries, selectedYear);
+    });
 
-  // y axis
   svg.append("g")
     .call(d3.axisLeft(y).tickFormat(d => d).tickSize(0))
     .call(g => g.select(".domain").remove())
@@ -363,7 +410,6 @@ function drawRuralBarChart(data, selectedYear) {
     .attr("fill", "black").attr("text-anchor", "middle")
     .text("Number of Countries");
 
-  // x axis
   svg.append("g")
     .attr("transform", `translate(0,${iH})`)
     .call(d3.axisBottom(x).tickSize(0))
@@ -375,7 +421,6 @@ function drawRuralBarChart(data, selectedYear) {
 }
 
 function drawGenderBarChart(data, selectedYear) {
-
   d3.select("#panel-3").selectAll("*").remove();
 
   let countries = data.filter(d => {
@@ -384,19 +429,19 @@ function drawGenderBarChart(data, selectedYear) {
     return d.Year === selectedYear;
   });
 
-  if (selectedEntities.size > 0) {
-    countries = countries.filter(d => selectedEntities.has(d.Entity));
-  }
+  const displayCountries = selectedEntities.size > 0
+    ? countries.filter(d => selectedEntities.has(d.Entity))
+    : countries;
 
-  // 
-  const binSize = (1.1 - 0.4) / 7; // range of GDI values (0.3 to 1.1)
+  const binSize = (1.1 - 0.4) / 7;
   const bins = d3.range(0.4, 1.1, binSize).map(start => {
     const end = +(start + binSize).toFixed(1);
     return {
       label: `${start.toFixed(1)}–${end.toFixed(1)}`,
       min: start,
       max: end,
-      countries: countries.filter(d => d.gdi >= start && d.gdi < end)
+      allCountries: countries.filter(d => d.gdi >= start && d.gdi < end),
+      countries: displayCountries.filter(d => d.gdi >= start && d.gdi < end)
     };
   });
 
@@ -408,8 +453,7 @@ function drawGenderBarChart(data, selectedYear) {
 
   const svg = d3.select("#panel-3")
     .append("svg")
-    .attr("width",  barWidth)
-    .attr("height", barHeight)
+    .attr("width", barWidth).attr("height", barHeight)
     .append("g")
     .attr("transform", `translate(${barMargin.left},${barMargin.top})`);
 
@@ -417,24 +461,21 @@ function drawGenderBarChart(data, selectedYear) {
     .attr("x", iW / 2).attr("y", -14)
     .attr("text-anchor", "middle")
     .attr("font-size", "14px").attr("font-weight", "bold")
-    .text("Number of Countries by Gender Development Index Range (" + selectedYear + ")");
+    .text(`Number of Countries by Gender Development Index Range (${selectedYear})`);
 
   const x = d3.scaleBand()
     .domain(bins.map(b => b.label))
-    .range([0, iW])
-    .padding(0.15);
+    .range([0, iW]).padding(0.15);
 
   const y = d3.scaleLinear()
-    .domain([0, d3.max(bins, b => b.countries.length)]).nice()
+    .domain([0, d3.max(bins, b => b.allCountries.length)]).nice()
     .range([iH, 0]);
 
-  // gridlines
   svg.append("g")
     .call(d3.axisLeft(y).tickSize(-iW).tickFormat(""))
     .call(g => g.selectAll("line").attr("stroke", "#e0e0e0"))
     .call(g => g.select(".domain").remove());
 
-  
   svg.selectAll(".bar-gender")
     .data(bins)
     .join("rect")
@@ -443,7 +484,11 @@ function drawGenderBarChart(data, selectedYear) {
     .attr("y", b => y(b.countries.length))
     .attr("width", x.bandwidth())
     .attr("height", b => iH - y(b.countries.length))
-    .attr("fill",  "#f06277")
+    .attr("fill", b => {
+      if (selectedEntities.size === 0) return "#f06277";
+      return b.countries.length > 0 ? "#f06277" : "#fcd6dc";
+    })
+    .style("cursor", "pointer")
     .on("mouseover", (event, b) => {
       d3.select("#tooltip")
         .style("display", "block")
@@ -455,9 +500,11 @@ function drawGenderBarChart(data, selectedYear) {
           <small>${b.countries.map(d => d.Entity).join(", ")}</small>
         `);
     })
-    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"));
+    .on("mouseleave", () => d3.select("#tooltip").style("display", "none"))
+    .on("click", (event, b) => {
+      handleBarClick(b.allCountries, selectedYear);
+    });
 
-  // y axis
   svg.append("g")
     .call(d3.axisLeft(y).tickFormat(d => d).tickSize(0))
     .call(g => g.select(".domain").remove())
@@ -467,7 +514,6 @@ function drawGenderBarChart(data, selectedYear) {
     .attr("fill", "black").attr("text-anchor", "middle")
     .text("Number of Countries");
 
-  // x axis
   svg.append("g")
     .attr("transform", `translate(0,${iH})`)
     .call(d3.axisBottom(x).tickSize(0))
@@ -478,25 +524,15 @@ function drawGenderBarChart(data, selectedYear) {
     .text("Gender Development Index Range");
 }
 
-//----scatter plot-------------
+// ---- Scatter ----
 let scatterXAttr = "Urban";
 let scatterYAttr = "gdi";
-
 
 d3.select("#plot").on("dblclick", () => {
   const year = +document.getElementById("year-slider").value;
   selectedEntities = new Set();
-  drawScatterChart(urbDataGlobal, genderDataGlobal, year);
+  redrawAll(year);
 });
-
-const scatterAttrConfig = {
-  Urban:  { label: "Urban Population %",  format: d => d.toFixed(1) + "%",     scale: "linear" },
-  Rural:  { label: "Rural Population %",  format: d => d.toFixed(1) + "%",     scale: "linear" },
-  gdi:    { label: "Gender Dev. Index",   format: d => d.toFixed(3),            scale: "linear" },
-  gdp:    { label: "GDP per Capita",      format: d => "$" + d3.format(",")(Math.round(d)), scale: "log" },
-  pop:    { label: "Population",          format: d => d3.format(".2s")(d),     scale: "log" }
-};
-
 
 function initScatterControls(urbData, genderData) {
   document.querySelectorAll(".x-btn").forEach(btn => {
@@ -521,7 +557,7 @@ function initScatterControls(urbData, genderData) {
   });
 }
 
-function drawScatterChart(urbData, genderData, selectedYear) {  
+function drawScatterChart(urbData, genderData, selectedYear) {
   d3.select("#plot").selectAll("*").remove();
 
   const urbFiltered = new Map();
@@ -561,7 +597,6 @@ function drawScatterChart(urbData, genderData, selectedYear) {
     });
   });
 
-  // ← define config and cfg before anything uses them
   const attrConfig = {
     Urban: { label: "Urban Population %", format: d => d.toFixed(1) + "%",                          scale: "linear" },
     Rural: { label: "Rural Population %", format: d => d.toFixed(1) + "%",                          scale: "linear" },
@@ -573,7 +608,6 @@ function drawScatterChart(urbData, genderData, selectedYear) {
   const xCfg = attrConfig[scatterXAttr];
   const yCfg = attrConfig[scatterYAttr];
 
-  // ← define clean before scales use it
   const clean = merged.filter(d =>
     d[scatterXAttr] > 0 && d[scatterYAttr] > 0 &&
     !isNaN(d[scatterXAttr]) && !isNaN(d[scatterYAttr])
@@ -610,7 +644,6 @@ function drawScatterChart(urbData, genderData, selectedYear) {
   const colorScale = d3.scaleOrdinal(d3.schemeTableau10)
     .domain([...new Set(clean.map(d => d.region))]);
 
-  // gridlines
   svg.append("g")
     .call(d3.axisLeft(yScale).tickSize(-scatterWidth).tickFormat(""))
     .call(g => g.selectAll("line").attr("stroke", "#e0e0e0"))
@@ -622,7 +655,6 @@ function drawScatterChart(urbData, genderData, selectedYear) {
     .call(g => g.selectAll("line").attr("stroke", "#e0e0e0"))
     .call(g => g.select(".domain").remove());
 
-  // axes — drawn once with gdp-aware tick values
   const xAxis = scatterXAttr === "gdp"
     ? d3.axisBottom(xScale).tickValues([1000, 5000, 10000, 25000, 50000, 100000]).tickFormat(xCfg.format)
     : d3.axisBottom(xScale).tickFormat(xCfg.format).ticks(4);
@@ -648,56 +680,57 @@ function drawScatterChart(urbData, genderData, selectedYear) {
     .text(yCfg.label);
 
   // ---- brush ----
-
   const brush = d3.brush()
     .extent([[0, 0], [scatterWidth, scatterHeight]])
     .on("end", function(event) {
-  if (!event.selection) {
-    selectedEntities = new Set();
-  } else {
-    const [[x0, y0], [x1, y1]] = event.selection;
-    selectedEntities = new Set(
-      clean
-        .filter(d => {
-          const cx = xScale(d[scatterXAttr]);
-          const cy = yScale(d[scatterYAttr]);
-          return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
-        })
-        .map(d => d.Entity)
-    );
-  }
+      if (!event.selection) {
+        selectedEntities = new Set();
+      } else {
+        const [[x0, y0], [x1, y1]] = event.selection;
+        selectedEntities = new Set(
+          clean
+            .filter(d => {
+              const cx = xScale(d[scatterXAttr]);
+              const cy = yScale(d[scatterYAttr]);
+              return cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1;
+            })
+            .map(d => d.Entity)
+        );
+      }
 
-  // highlight dots
-  d3.selectAll(".dot")
-    .attr("opacity", d =>
-      selectedEntities.size === 0 || selectedEntities.has(d.Entity) ? 0.75 : 0.1
-    )
-    .attr("r", d =>
-      selectedEntities.size === 0 || selectedEntities.has(d.Entity) ? rScale(d.gdp) : 3
-    );
+      d3.selectAll(".dot")
+        .attr("opacity", d =>
+          selectedEntities.size === 0 || selectedEntities.has(d.Entity) ? 0.75 : 0.1
+        )
+        .attr("r", d =>
+          selectedEntities.size === 0 || selectedEntities.has(d.Entity) ? rScale(d.gdp) : 3
+        );
 
-  // redraw histograms
-  const year = +document.getElementById("year-slider").value;
-  drawUrbBarChart(urbDataGlobal, year);
-  drawRuralBarChart(urbDataGlobal, year);
-  drawGenderBarChart(genderDataGlobal, year);
+      const year = +document.getElementById("year-slider").value;
+      drawUrbBarChart(urbDataGlobal, year);
+      drawRuralBarChart(urbDataGlobal, year);
+      drawGenderBarChart(genderDataGlobal, year);
 
-  // highlight map
-  d3.selectAll(".country").attr("fill", function(d) {
-    if (selectedEntities.size === 0) {
-      return d.properties.genderindex
-        ? window._choroplethColorScale(d.properties.genderindex)
-        : "#e0e0e0";
-    }
-    const isSelected = selectedEntities.has(d.properties.name) ||
-      [...selectedEntities].some(e => nameMap[d.properties.name] === e || d.properties.name === e);
-    return isSelected
-      ? (d.properties.genderindex ? window._choroplethColorScale(d.properties.genderindex) : "#aaa")
-      : "#d0d0d0";
-  });
-});
+      d3.selectAll(".country").attr("fill", function(d) {
+        if (selectedEntities.size === 0) {
+          return d.properties.mapValue != null
+            ? window._choroplethColorScale(d.properties.mapValue)
+            : "#e0e0e0";
+        }
+        const isSelected = selectedEntities.has(d.properties.name) ||
+          [...selectedEntities].some(e =>
+            nameMap[d.properties.name] === e || d.properties.name === e
+          );
+        return isSelected
+          ? (d.properties.mapValue != null
+              ? window._choroplethColorScale(d.properties.mapValue)
+              : "#aaa")
+          : "#d0d0d0";
+      });
+    });
 
   svg.append("g").attr("class", "brush").call(brush);
+
   svg.selectAll(".dot").data(clean).join("circle")
     .attr("class", "dot")
     .attr("cx", d => xScale(d[scatterXAttr]))
@@ -722,7 +755,7 @@ function drawScatterChart(urbData, genderData, selectedYear) {
     })
     .on("mouseleave", () => d3.select("#tooltip").style("display", "none"));
 
-    svg.selectAll(".dot").raise();
+  svg.selectAll(".dot").raise();
 
   // legend
   const regions = [...new Set(clean.map(d => d.region))].filter(Boolean);
@@ -731,19 +764,4 @@ function drawScatterChart(urbData, genderData, selectedYear) {
     legend.append("circle").attr("cx", 6).attr("cy", i * 20).attr("r", 5).attr("fill", colorScale(r));
     legend.append("text").attr("x", 16).attr("y", i * 20 + 4).attr("font-size", "10px").text(r);
   });
-
-  
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
